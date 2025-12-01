@@ -14,12 +14,14 @@ interface Bubble {
 // --- Configuration ---
 const CONFIG = {
   loopEndTime: 7.0,      // 1단계: 0~7초 구간 반복
-  vocalStartTime: 17.0,  // 2단계: 보컬 시작 시간 (clockfinal 기준)
+  vocalStartTime: 17.0,  // 2단계: 음악 시작 시간 (onlyclock 기준)
   gaugeSpeed: 0.15,      // 게이지 차오르는 속도 (Input Sensitivity) - Stage 1
   vocalGaugeSpeed: 0.15, // Vocal control 단계 게이지 속도 (10초에 최대치)
-  decayRate: 0.7,        // 게이지 줄어드는 속도
-  vocalStartThreshold: 30, // 보컬이 시작되는 게이지 퍼센트
-  inputKeys: [' ', 'Enter']
+  decayRate: 0.5,        // 게이지 줄어드는 속도
+  fadeOutTime: 10.0,     // Reset 시 페이드아웃 시간 (초)
+  inputKeys: [' ', 'Enter'],
+  // 음악 폴더 목록 (자동 인식)
+  musicFolders: ['AtYourBest', 'HouseOfCards', 'Misty']
 };
 
 function App() {
@@ -35,17 +37,23 @@ function App() {
   const audioRef = useRef<{
     ctx: AudioContext | null;
     clockSrc: AudioBufferSourceNode | null;
-    vocalSrc: AudioBufferSourceNode | null;
+    otherSrc: AudioBufferSourceNode | null;
+    bassSrc: AudioBufferSourceNode | null;
+    drumsSrc: AudioBufferSourceNode | null;
+    vocalsSrc: AudioBufferSourceNode | null;
     gainClock: GainNode | null;
-    gainVocal: GainNode | null;
-    startTime: number; // clockfinal 시작 시간 (Context Time)
+    gainOther: GainNode | null;
+    gainBass: GainNode | null;
+    gainDrums: GainNode | null;
+    gainVocals: GainNode | null;
+    startTime: number; // onlyclock 시작 시간 (Context Time)
   }>({
-    ctx: null, clockSrc: null, vocalSrc: null, 
-    gainClock: null, gainVocal: null, startTime: 0
+    ctx: null, clockSrc: null, otherSrc: null, bassSrc: null, drumsSrc: null, vocalsSrc: null,
+    gainClock: null, gainOther: null, gainBass: null, gainDrums: null, gainVocals: null, startTime: 0
   });
 
-  const buffersRef = useRef<{ clock: AudioBuffer | null; vocal: AudioBuffer | null }>({
-    clock: null, vocal: null
+  const buffersRef = useRef<{ clock: AudioBuffer | null }>({
+    clock: null
   });
 
   const stateRef = useRef({
@@ -67,12 +75,48 @@ function App() {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const bubbleIdRef = useRef(0);
   const bubblesRef = useRef<Bubble[]>([]); // Mutable for loop
+  const [isPaused, setIsPaused] = useState(false);
+  const [selectedMusic, setSelectedMusic] = useState<string>(CONFIG.musicFolders[0]);
+  const [musicBuffers, setMusicBuffers] = useState<{
+    [key: string]: {
+      other: AudioBuffer | null;
+      bass: AudioBuffer | null;
+      drums: AudioBuffer | null;
+      vocals: AudioBuffer | null;
+    }
+  }>({});
 
   // --- 1. Audio Loading ---
   const loadFile = async (ctx: AudioContext, url: string) => {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to load ${url}`);
     return await ctx.decodeAudioData(await res.arrayBuffer());
+  };
+
+  // 음악 폴더의 모든 트랙 로드
+  const loadMusicFolder = async (ctx: AudioContext, folderName: string) => {
+    const extensions = ['.wav', '.flac'];
+    let other: AudioBuffer | null = null;
+    let bass: AudioBuffer | null = null;
+    let drums: AudioBuffer | null = null;
+    let vocals: AudioBuffer | null = null;
+
+    for (const ext of extensions) {
+      try {
+        if (!other) other = await loadFile(ctx, `/${folderName}/other${ext}`);
+      } catch {}
+      try {
+        if (!bass) bass = await loadFile(ctx, `/${folderName}/bass${ext}`);
+      } catch {}
+      try {
+        if (!drums) drums = await loadFile(ctx, `/${folderName}/drums${ext}`);
+      } catch {}
+      try {
+        if (!vocals) vocals = await loadFile(ctx, `/${folderName}/vocals${ext}`);
+      } catch {}
+    }
+
+    return { other, bass, drums, vocals };
   };
 
   const initAudio = async () => {
@@ -84,30 +128,51 @@ function App() {
       const ctx = new AudioContext();
       if (ctx.state === 'suspended') await ctx.resume();
 
-      const [clockBuf, vocalBuf] = await Promise.all([
-        loadFile(ctx, '/Final/clockfinal.wav'), // 경로 확인!
-        loadFile(ctx, '/Final/vocals.wav')      // 경로 확인!
-      ]);
+      // onlyclock.wav 로드
+      const clockBuf = await loadFile(ctx, '/onlyclock.wav');
+      buffersRef.current = { clock: clockBuf };
 
-      buffersRef.current = { clock: clockBuf, vocal: vocalBuf };
+      // 선택된 음악만 먼저 로드
+      const musicBuffersData: typeof musicBuffers = {};
+      musicBuffersData[selectedMusic] = await loadMusicFolder(ctx, selectedMusic);
+      setMusicBuffers(musicBuffersData);
+
+      // 나머지 음악은 백그라운드에서 로드
+      Promise.all(
+        CONFIG.musicFolders
+          .filter(folder => folder !== selectedMusic)
+          .map(async (folder) => {
+            const buffers = await loadMusicFolder(ctx, folder);
+            setMusicBuffers(prev => ({ ...prev, [folder]: buffers }));
+          })
+      ).catch(console.error);
 
       // Node Setup
       const gainClock = ctx.createGain();
-      const gainVocal = ctx.createGain();
+      const gainOther = ctx.createGain();
+      const gainBass = ctx.createGain();
+      const gainDrums = ctx.createGain();
+      const gainVocals = ctx.createGain();
       
       // Initial Volumes
       gainClock.gain.value = 0; // Controlled by gauge in Stage 1
-      gainVocal.gain.value = 0; // Muted until 17s
+      gainOther.gain.value = 0; // Starts at 17s
+      gainBass.gain.value = 0;
+      gainDrums.gain.value = 0;
+      gainVocals.gain.value = 0;
 
       gainClock.connect(ctx.destination);
-      gainVocal.connect(ctx.destination);
+      gainOther.connect(ctx.destination);
+      gainBass.connect(ctx.destination);
+      gainDrums.connect(ctx.destination);
+      gainVocals.connect(ctx.destination);
 
       audioRef.current = { 
-        ctx, clockSrc: null, vocalSrc: null, 
-        gainClock, gainVocal, startTime: 0 
+        ctx, clockSrc: null, otherSrc: null, bassSrc: null, drumsSrc: null, vocalsSrc: null,
+        gainClock, gainOther, gainBass, gainDrums, gainVocals, startTime: 0 
       };
 
-      startMusic(ctx, clockBuf, vocalBuf);
+      startMusic(ctx, clockBuf);
 
     } catch (e: any) {
       console.error(e);
@@ -118,9 +183,9 @@ function App() {
     }
   };
 
-  const startMusic = (ctx: AudioContext, clockBuf: AudioBuffer, vocalBuf: AudioBuffer) => {
-    const { gainClock, gainVocal } = audioRef.current;
-    if (!gainClock || !gainVocal) return;
+  const startMusic = (ctx: AudioContext, clockBuf: AudioBuffer) => {
+    const { gainClock } = audioRef.current;
+    if (!gainClock) return;
 
     // Calculate exact sample positions for seamless loop
     const sampleRate = clockBuf.sampleRate;
@@ -135,18 +200,14 @@ function App() {
     clockSrc.loopEnd = loopEndSample / sampleRate;
     clockSrc.connect(gainClock);
 
-    // 2. Vocal Source (Prepared but connected)
-    const vocalSrc = ctx.createBufferSource();
-    vocalSrc.buffer = vocalBuf;
-    vocalSrc.connect(gainVocal);
-
     const now = ctx.currentTime;
     clockSrc.start(now);
     
     // Save state
     audioRef.current.clockSrc = clockSrc;
-    audioRef.current.vocalSrc = vocalSrc;
     audioRef.current.startTime = now;
+
+    // Don't schedule music here - wait for releaseLoop
 
     setIsReady(true);
     setStage(1);
@@ -155,40 +216,218 @@ function App() {
     // Game loop should already be running from mount effect
   };
 
-  // --- 2. Logic: Release Loop & Schedule Vocal ---
+  const scheduleMusicAt17s = (ctx: AudioContext, musicStartAt: number) => {
+    const { gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
+    if (!gainOther || !gainBass || !gainDrums || !gainVocals) return;
+
+    const currentMusic = musicBuffers[selectedMusic];
+    if (!currentMusic || !currentMusic.other) return;
+
+    const now = ctx.currentTime;
+    const delay = Math.max(0, musicStartAt - now);
+
+    // Create sources for all tracks
+    const otherSrc = ctx.createBufferSource();
+    otherSrc.buffer = currentMusic.other!;
+    otherSrc.connect(gainOther);
+    otherSrc.start(musicStartAt);
+
+    const bassSrc = ctx.createBufferSource();
+    if (currentMusic.bass) {
+      bassSrc.buffer = currentMusic.bass;
+      bassSrc.connect(gainBass);
+      bassSrc.start(musicStartAt);
+    }
+
+    const drumsSrc = ctx.createBufferSource();
+    if (currentMusic.drums) {
+      drumsSrc.buffer = currentMusic.drums;
+      drumsSrc.connect(gainDrums);
+      drumsSrc.start(musicStartAt);
+    }
+
+    const vocalsSrc = ctx.createBufferSource();
+    if (currentMusic.vocals) {
+      vocalsSrc.buffer = currentMusic.vocals;
+      vocalsSrc.connect(gainVocals);
+      vocalsSrc.start(musicStartAt);
+    }
+
+    // Update refs
+    audioRef.current.otherSrc = otherSrc;
+    audioRef.current.bassSrc = bassSrc;
+    audioRef.current.drumsSrc = drumsSrc;
+    audioRef.current.vocalsSrc = vocalsSrc;
+
+    // Start others at full volume
+    gainOther.gain.setValueAtTime(1.0, musicStartAt);
+
+    // Schedule state change
+    if (delay > 0) {
+      setTimeout(() => {
+        stateRef.current.vocalActive = true;
+        setStage(2);
+        setStatusText("VOCAL CONTROL ACTIVE");
+        stateRef.current.gauge = 0;
+      }, delay * 1000);
+    } else {
+      // Start immediately
+      stateRef.current.vocalActive = true;
+      setStage(2);
+      setStatusText("VOCAL CONTROL ACTIVE");
+      stateRef.current.gauge = 0;
+    }
+  };
+
+  // --- 2. Logic: Play/Pause/Stop Controls ---
+  const handlePlay = async () => {
+    const { ctx } = audioRef.current;
+    if (!ctx) return;
+    
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    setIsPaused(false);
+  };
+
+  const handlePause = async () => {
+    const { ctx } = audioRef.current;
+    if (!ctx) return;
+    
+    if (ctx.state === 'running') {
+      await ctx.suspend();
+    }
+    setIsPaused(true);
+  };
+
+  const handleStop = () => {
+    resetToStage1();
+    setIsPaused(false);
+  };
+
+  // --- 2. Logic: Reset to Stage 1 ---
+  const resetToStage1 = () => {
+    const { ctx, clockSrc, otherSrc, bassSrc, drumsSrc, vocalsSrc, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
+    if (!ctx || !clockSrc || !gainClock) return;
+
+    // Fade out volume gradually (10 seconds)
+    const fadeOutTime = CONFIG.fadeOutTime;
+    const now = ctx.currentTime;
+    
+    // 현재 볼륨 값 가져오기
+    const currentClockVol = gainClock.gain.value;
+    
+    // 선형 페이드아웃 (linearRampToValueAtTime 사용)
+    gainClock.gain.cancelScheduledValues(now);
+    gainClock.gain.setValueAtTime(currentClockVol, now);
+    gainClock.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    
+    if (gainOther) {
+      const currentOtherVol = gainOther.gain.value;
+      gainOther.gain.cancelScheduledValues(now);
+      gainOther.gain.setValueAtTime(currentOtherVol, now);
+      gainOther.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    }
+    if (gainBass) {
+      const currentBassVol = gainBass.gain.value;
+      gainBass.gain.cancelScheduledValues(now);
+      gainBass.gain.setValueAtTime(currentBassVol, now);
+      gainBass.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    }
+    if (gainDrums) {
+      const currentDrumsVol = gainDrums.gain.value;
+      gainDrums.gain.cancelScheduledValues(now);
+      gainDrums.gain.setValueAtTime(currentDrumsVol, now);
+      gainDrums.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    }
+    if (gainVocals) {
+      const currentVocalsVol = gainVocals.gain.value;
+      gainVocals.gain.cancelScheduledValues(now);
+      gainVocals.gain.setValueAtTime(currentVocalsVol, now);
+      gainVocals.gain.linearRampToValueAtTime(0, now + fadeOutTime);
+    }
+
+    // After fade out completes, stop sources and reset everything
+    setTimeout(() => {
+      // Stop audio sources after fade out
+      if (otherSrc) {
+        try { otherSrc.stop(); } catch (e) {}
+      }
+      if (bassSrc) {
+        try { bassSrc.stop(); } catch (e) {}
+      }
+      if (drumsSrc) {
+        try { drumsSrc.stop(); } catch (e) {}
+      }
+      if (vocalsSrc) {
+        try { vocalsSrc.stop(); } catch (e) {}
+      }
+      if (clockSrc) {
+        try { clockSrc.stop(); } catch (e) {}
+      }
+      
+      const { clock } = buffersRef.current;
+      if (!clock) return;
+
+      // Create new clock source
+      const newClockSrc = ctx.createBufferSource();
+      newClockSrc.buffer = clock;
+      newClockSrc.loop = true;
+      newClockSrc.loopStart = 0;
+      newClockSrc.loopEnd = CONFIG.loopEndTime;
+      newClockSrc.connect(gainClock);
+
+      const startTime = ctx.currentTime;
+      newClockSrc.start(startTime);
+
+      // Update refs
+      audioRef.current.clockSrc = newClockSrc;
+      audioRef.current.otherSrc = null;
+      audioRef.current.bassSrc = null;
+      audioRef.current.drumsSrc = null;
+      audioRef.current.vocalsSrc = null;
+      audioRef.current.startTime = startTime;
+
+      // Reset state
+      stateRef.current.isLooping = true;
+      stateRef.current.vocalActive = false;
+      stateRef.current.gauge = 0;
+      stateRef.current.visualGauge = 0;
+
+      // Update UI
+      setStage(1);
+      setStatusText("SYNC TIME (HOLD SPACE)");
+      
+      // Reset gain nodes
+      if (audioRef.current.gainOther) audioRef.current.gainOther.gain.value = 0;
+      if (audioRef.current.gainBass) audioRef.current.gainBass.gain.value = 0;
+      if (audioRef.current.gainDrums) audioRef.current.gainDrums.gain.value = 0;
+      if (audioRef.current.gainVocals) audioRef.current.gainVocals.gain.value = 0;
+    }, fadeOutTime * 1000);
+  };
+
+  // --- 2. Logic: Release Loop & Schedule Music ---
   const releaseLoop = () => {
-    const { ctx, clockSrc, vocalSrc, startTime } = audioRef.current;
-    if (!ctx || !clockSrc || !vocalSrc) return;
+    const { ctx, clockSrc, startTime } = audioRef.current;
+    if (!ctx || !clockSrc) return;
 
     // Break Loop
     clockSrc.loop = false;
     stateRef.current.isLooping = false;
     setStatusText("SYNC COMPLETE...");
 
-    // Calculate timing for Vocal entry
+    // Calculate when to start music (17 seconds from clock start)
     const now = ctx.currentTime;
-    // How much time passed in the *current* loop iteration
-    const timeInLoop = (now - startTime) % CONFIG.loopEndTime;
+    const elapsed = now - startTime;
+    const timeUntil17s = CONFIG.vocalStartTime - elapsed;
     
-    // Time remaining until the 'physical' end of 9s
-    const timeUntilNine = CONFIG.loopEndTime - timeInLoop;
-    // Time from 9s to 17s
-    const gapToSeventeen = CONFIG.vocalStartTime - CONFIG.loopEndTime;
-    
-    const delay = timeUntilNine + gapToSeventeen;
-    const vocalStartAt = now + delay;
-
-    // Schedule Vocal Start
-    vocalSrc.start(vocalStartAt);
-
-    // Schedule State Change (for Visuals/Logic)
-    setTimeout(() => {
-        stateRef.current.vocalActive = true;
-        setStage(2); // Blue Mode
-        setStatusText("VOCAL CONTROL ACTIVE");
-        // Reset gauge for Vocal Control
-        stateRef.current.gauge = 0; 
-    }, delay * 1000);
+    if (timeUntil17s > 0) {
+      // Schedule music at 17s
+      scheduleMusicAt17s(ctx, now + timeUntil17s);
+    } else {
+      // Already past 17s, start immediately
+      scheduleMusicAt17s(ctx, now);
+    }
   };
 
   // --- 3. Animation Helpers ---
@@ -240,7 +479,7 @@ function App() {
   // --- 4. Main Game Loop ---
   const gameLoop = (time: number) => {
     const t = time * 0.002;
-    const { ctx, gainClock, gainVocal } = audioRef.current;
+    const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
 
     // --- Input Logic ---
     // Use slower speed for vocal control stage
@@ -261,7 +500,7 @@ function App() {
     let visualLevel = 0; // 0.0 ~ 1.0
 
     // Only control audio if context is ready
-    if (ctx && gainClock && gainVocal) {
+    if (ctx && gainClock) {
         if (stateRef.current.isLooping) {
             // [Stage 1] Loop Mode
             // Trigger Transition
@@ -286,21 +525,41 @@ function App() {
             visualLevel = 0.95 + Math.sin(time * 0.005) * 0.05;
         }
         else {
-            // [Stage 3] Vocal Mode
-            // Clock stays full
-            gainClock.gain.setTargetAtTime(1.0, ctx.currentTime, 0.05);
+            // [Stage 2] Music Control Mode
+            // Clock and Others stay full
+            if (gainClock) gainClock.gain.setTargetAtTime(1.0, ctx.currentTime, 0.05);
+            if (gainOther) gainOther.gain.setTargetAtTime(1.0, ctx.currentTime, 0.05);
             
-            // Vocal Volume: 게이지 30%부터 시작 (30% 미만이면 0, 30% 이상이면 0~1로 매핑)
-            let vocalVol = 0;
-            if (stateRef.current.gauge >= CONFIG.vocalStartThreshold) {
-                // 30~100을 0~1로 매핑
-                const range = 100 - CONFIG.vocalStartThreshold;
-                vocalVol = (stateRef.current.gauge - CONFIG.vocalStartThreshold) / range;
+            const gauge = stateRef.current.gauge;
+            let bassVol = 0;
+            let drumsVol = 0;
+            let vocalsVol = 0;
+            
+            // 0~20%: bass
+            if (gauge > 0 && gauge <= 20) {
+                bassVol = gauge / 20; // 0~1
+            } else if (gauge > 20) {
+                bassVol = 1.0;
             }
-            gainVocal.gain.setTargetAtTime(vocalVol, ctx.currentTime, 0.05);
+            
+            // 20~40%: drums
+            if (gauge > 20 && gauge <= 40) {
+                drumsVol = (gauge - 20) / 20; // 0~1
+            } else if (gauge > 40) {
+                drumsVol = 1.0;
+            }
+            
+            // 40~100%: vocals
+            if (gauge > 40 && gauge <= 100) {
+                vocalsVol = (gauge - 40) / 60; // 0~1
+            }
+            
+            if (gainBass) gainBass.gain.setTargetAtTime(bassVol, ctx.currentTime, 0.05);
+            if (gainDrums) gainDrums.gain.setTargetAtTime(drumsVol, ctx.currentTime, 0.05);
+            if (gainVocals) gainVocals.gain.setTargetAtTime(vocalsVol, ctx.currentTime, 0.05);
 
             // Visual level은 전체 게이지 비율 사용
-            visualLevel = stateRef.current.gauge / 100;
+            visualLevel = gauge / 100;
         }
     } else {
         // Audio not ready yet, just show visual gauge
@@ -422,9 +681,43 @@ function App() {
                 {isLoading ? "LOADING..." : "CONNECT AUDIO"}
             </button>
         )}
+
+        {isReady && (
+          <div className="playback-controls">
+            {!isPaused ? (
+              <button className="btn-control" onClick={handlePause}>
+                PAUSE
+              </button>
+            ) : (
+              <button className="btn-control" onClick={handlePlay}>
+                PLAY
+              </button>
+            )}
+            <button className="btn-control" onClick={handleStop}>
+              STOP
+            </button>
+          </div>
+        )}
       </div>
 
       {errorMessage && <div className="error-msg">{errorMessage}</div>}
+
+      {/* Music Selection - Bottom Right */}
+      {isReady && (
+        <div className="music-selector">
+          <div className="music-list">
+            {CONFIG.musicFolders.map((folder) => (
+              <div
+                key={folder}
+                className={`music-item ${selectedMusic === folder ? 'active' : ''}`}
+                onClick={() => setSelectedMusic(folder)}
+              >
+                {folder}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
