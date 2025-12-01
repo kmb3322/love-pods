@@ -1,7 +1,53 @@
 @font-face {
   font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaW06Bold.woff2') format('woff2');
+  src: url('/NeueHaasUnicaPro.woff2') format('woff2'),
+       url('/NeueHaasUnicaPro.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaProLight.woff2') format('woff2'),
+       url('/NeueHaasUnicaProLight.woff') format('woff');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaProMedium.woff2') format('woff2'),
+       url('/NeueHaasUnicaProMedium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaW06Bold.woff2') format('woff2'),
+       url('/NeueHaasUnicaW06Bold.woff') format('woff');
   font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaW06Heavy.woff2') format('woff2'),
+       url('/NeueHaasUnicaW06Heavy.woff') format('woff');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaW06Thin.woff2') format('woff2'),
+       url('/NeueHaasUnicaW06Thin.woff') format('woff');
+  font-weight: 100;
   font-style: normal;
   font-display: swap;
 }
@@ -77,6 +123,33 @@ body {
   z-index: 10;
 }
 
+.playback-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.btn-control {
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  text-transform: uppercase;
+}
+
+.btn-control:hover {
+  background: #333;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+}
+
 .btn-start {
   padding: 16px 32px;
   font-size: 16px;
@@ -127,4 +200,167 @@ body {
   bottom: 20px;
   color: #e74c3c;
   font-size: 12px;
+}
+
+/* Music Selector - Bottom Right */
+.music-selector {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  z-index: 100;
+}
+
+.music-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.music-item {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.3px;
+  color: #999;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: right;
+  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.music-item:hover {
+  color: #666;
+}
+
+.music-item.selected {
+  color: #1a1a1a;
+  font-weight: 500;
+}
+
+.music-item.selectable {
+  cursor: pointer;
+}
+
+.music-item.selectable:hover {
+  color: #1a1a1a;
+  transform: translateX(-4px);
+}
+
+.music-item:not(.selectable) {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.music-item.loading {
+  opacity: 0.6;
+  cursor: wait;
+  position: relative;
+}
+
+.music-item.loading::after {
+  content: '...';
+  margin-left: 4px;
+  animation: dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+.music-selector .label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #999;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  text-align: right;
+  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+}
+
+/* Control Buttons */
+.control-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.icon-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid #333;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.icon-btn:hover {
+  background: #333;
+  color: #f0f0f0;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.icon-btn:active {
+  transform: translateY(0);
+}
+
+.icon-btn.btn-pause {
+  border-color: #333;
+}
+
+.icon-btn.btn-stop {
+  border-color: #e74c3c;
+  color: #e74c3c;
+}
+
+.icon-btn.btn-stop:hover {
+  background: #e74c3c;
+  color: #fff;
+}
+
+/* Loading Progress */
+.loading-progress {
+  width: 200px;
+  margin-top: 8px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #333;
+  transition: width 0.3s ease;
+  border-radius: 2px;
+}
+
+.progress-text {
+  font-size: 10px;
+  color: #999;
+  text-align: center;
+  margin-top: 4px;
+  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  letter-spacing: 0.5px;
 }
