@@ -1,8 +1,12 @@
 #root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f0f0f0;
 }
 
 .logo {
@@ -39,4 +43,107 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* Gauge Container - Centered */
+.clock-container {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  margin: 0 auto;
+  transition: transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.clock-container.leaning-active {
+  transform: scale(1.02);
+}
+
+.circle-bg {
+  fill: none;
+  stroke: #333;
+  stroke-width: 1;
+  transition: stroke 0.5s;
+}
+
+.clock-container.leaning-active .circle-bg {
+  stroke: #555;
+}
+
+.liquid-layer {
+  transition: transform 0.1s linear;
+}
+
+/* Input Indicator */
+.input-indicator {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ccc;
+  transition: background 0.2s, box-shadow 0.2s;
+  z-index: 10;
+}
+
+.input-indicator.active {
+  background: #333;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Error Message */
+.error-msg {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #f55;
+  font-size: 12px;
+  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  z-index: 10;
+}
+
+/* Buttons */
+.btn-start,
+.btn-control {
+  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-radius: 50px;
+  border: 2px solid #333;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  padding: 12px 32px;
+  font-size: 12px;
+}
+
+.btn-start:hover,
+.btn-control:hover {
+  background: #333;
+  color: #f0f0f0;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn-start:active,
+.btn-control:active {
+  transform: translateY(0);
+}
+
+.btn-start:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.icon-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
 }

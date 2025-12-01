@@ -1,68 +1,130 @@
+@font-face {
+  font-family: 'NeueHaasUnica';
+  src: url('/NeueHaasUnicaW06Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+  font-family: 'NeueHaasUnica', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --bg-color: #f0f0f0;
+  --text-color: #1a1a1a;
+  --primary-color: #000;
 }
 
 body {
   margin: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
   display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+.app-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
+/* --- Clock Container (SVG) --- */
+.clock-container {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.leaning-active {
+  transform: scale(1.05);
+}
+
+.circle-bg {
+  fill: none;
+  stroke: #e0e0e0;
+  stroke-width: 2;
+}
+
+/* Liquid Layers */
+.liquid-layer {
+  transition: fill 0.5s;
+}
+.layer-1 { fill: rgba(0,0,0,1); }
+.layer-2 { fill: rgba(0,0,0,0.6); }
+.layer-3 { fill: rgba(0,0,0,0.3); }
+
+/* Vocal Mode Color Change */
+.vocal-mode .layer-1 { fill: #2980b9; } /* Blue for Vocals */
+.vocal-mode .layer-2 { fill: rgba(41, 128, 185, 0.6); }
+.vocal-mode .layer-3 { fill: rgba(41, 128, 185, 0.3); }
+
+/* --- Controls & Status --- */
+.controls-stack {
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: center;
+  z-index: 10;
+}
+
+.btn-start {
+  padding: 16px 32px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  border-radius: 50px;
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
 }
-button:hover {
-  border-color: #646cff;
+.btn-start:hover {
+  background: #333;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+.btn-start:disabled {
+  background: #ccc;
+  cursor: wait;
+  transform: none;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+.status-text {
+  font-size: 14px;
+  color: #888;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.input-indicator {
+  position: absolute;
+  top: 30px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  transition: all 0.2s;
+}
+.input-indicator.active {
+  background: #1a1a1a;
+  transform: scale(1.5);
+}
+
+.error-msg {
+  position: absolute;
+  bottom: 20px;
+  color: #e74c3c;
+  font-size: 12px;
 }
