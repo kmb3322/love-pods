@@ -19,7 +19,7 @@ const CONFIG = {
   vocalGaugeSpeed: 0.15, // 보컬 컨트롤 속도
   decayRate: 0.5,        // 감소 속도
   fadeOutTime: 10.0,     // 페이드아웃 시간
-  inputKeys: ['ArrowLeft', 'ArrowRight'],
+  inputKeys: [' ', 'Enter'],
   // 🔴 musicFolders 삭제됨
 };
 
@@ -27,14 +27,17 @@ function App() {
   // --- UI States ---
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [, setStatusText] = useState("DISCONNECTED");
   const [isLeaning, setIsLeaning] = useState(false);
   const [stage, setStage] = useState<0 | 1 | 2>(0);
+  const [, setErrorMessage] = useState("");
 
   // 🟢 동적 음악 목록 상태 추가
   const [musicList, setMusicList] = useState<string[]>([]);
   const [selectedMusic, setSelectedMusic] = useState<string>(""); 
   const selectedMusicRef = useRef<string>(""); // 🟢 ref로도 저장하여 동기 접근
-  const [isPaused, setIsPaused] = useState(false);
+  const [, setIsPaused] = useState(false);
+  const [, setLoadingProgress] = useState({ current: 0, total: 0 });
 
   // --- Logic Refs ---
   const audioRef = useRef<{
@@ -104,6 +107,7 @@ function App() {
       })
       .catch(err => {
         console.error("Failed to load music list:", err);
+        setErrorMessage("Music list load failed. Check public/music_list.json");
       });
   }, []);
 
@@ -143,11 +147,13 @@ function App() {
     // 이미 ready 상태면 재시작하지 않음 (정지 후 다시 시작하는 경우는 허용)
     const currentSelected = selectedMusicRef.current || selectedMusic;
     if (!currentSelected) {
+      setErrorMessage("No music selected");
       return;
     }
 
     setIsLoading(true);
     try {
+      setStatusText("LOADING...");
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       
       // 기존 context가 있으면 닫고 새로 생성 (clock을 처음부터 시작하기 위해)
@@ -163,14 +169,19 @@ function App() {
       if (ctx.state === 'suspended') await ctx.resume();
 
       // 1. Clock 로드
+      setStatusText("LOADING CLOCK...");
       const clockBuf = await loadFile(ctx, '/onlyclock.wav');
       buffersRef.current = { clock: clockBuf };
 
-
+      // 2. 모든 음악을 효율적으로 로드 (우선순위 기반 병렬 로딩)
+      const totalMusic = musicList.length;
+      setLoadingProgress({ current: 0, total: totalMusic });
       
       // 선택된 음악을 먼저 로드 (우선순위)
+      setStatusText(`LOADING ${currentSelected}...`);
       const selectedBuffers = await loadMusicFolder(ctx, currentSelected);
       musicBuffersRef.current[currentSelected] = selectedBuffers;
+      setLoadingProgress({ current: 1, total: totalMusic });
 
       // Node Setup (선택된 음악이 로드되면 바로 시작 가능)
       const gainClock = ctx.createGain();
@@ -203,20 +214,25 @@ function App() {
       const remainingMusic = musicList.filter(folder => folder !== currentSelected);
       if (remainingMusic.length > 0) {
         Promise.allSettled(
-          remainingMusic.map(async (folder) => {
+          remainingMusic.map(async (folder, index) => {
             try {
               const buffers = await loadMusicFolder(ctx, folder);
               musicBuffersRef.current[folder] = buffers;
+              setLoadingProgress({ current: 1 + index + 1, total: totalMusic });
             } catch (e) {
               console.error(`Failed to load ${folder}:`, e);
               // 에러가 있어도 계속 진행
             }
           })
-        );
+        ).then(() => {
+          setLoadingProgress({ current: totalMusic, total: totalMusic });
+        });
       }
 
     } catch (e: any) {
       console.error(e);
+      setErrorMessage(e.message);
+      setStatusText("ERROR");
     } finally {
       setIsLoading(false);
     }
@@ -256,6 +272,7 @@ function App() {
 
     setIsReady(true);
     setStage(1);
+    setStatusText("SYNC TIME (HOLD SPACE)");
 
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     requestRef.current = requestAnimationFrame(gameLoop);
@@ -270,6 +287,7 @@ function App() {
     const currentMusic = musicBuffersRef.current[currentSelected];
     if (!currentMusic || !currentMusic.other) {
       console.error(`Music buffers not loaded for: ${currentSelected}`, currentMusic);
+      setErrorMessage(`Failed to load music: ${currentSelected}`);
       return;
     }
 
@@ -294,6 +312,7 @@ function App() {
     setTimeout(() => {
         stateRef.current.vocalActive = true;
         setStage(2);
+        setStatusText("MUSIC ACTIVE");
         stateRef.current.gauge = 0;
     }, delay * 1000);
   };
@@ -304,6 +323,7 @@ function App() {
 
     clockSrc.loop = false;
     stateRef.current.isLooping = false;
+    setStatusText("SYNC COMPLETE...");
 
     const now = ctx.currentTime;
     
@@ -331,9 +351,17 @@ function App() {
     if (ctx.state === 'running') {
       await ctx.suspend();
       setIsPaused(true);
+      setStatusText("PAUSED");
     } else if (ctx.state === 'suspended') {
       await ctx.resume();
       setIsPaused(false);
+      if (stateRef.current.vocalActive) {
+        setStatusText("MUSIC ACTIVE");
+      } else if (!stateRef.current.isLooping) {
+        setStatusText("SYNC COMPLETE...");
+      } else {
+        setStatusText("SYNC TIME (HOLD SPACE)");
+      }
     }
   };
 
@@ -466,7 +494,7 @@ function App() {
     <div className="app-container">
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
       <div 
-        className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${isPaused ? 'paused' : ''}`}
+        className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${!isReady ? 'initial' : ''} ${isLoading ? 'loading' : ''}`}
         onClick={handleGaugeClick}
       >
         <svg width="300" height="300" viewBox="0 0 300 300">
@@ -484,12 +512,12 @@ function App() {
                 cx={b.x} 
                 cy={b.y} 
                 r={b.r} 
-                fill={stage === 2 ? "#c5d5e8" : "#fff"} 
+                fill={stage === 2 ? "#e8d5ff" : "#fff"} 
                 opacity={b.opacity} 
                 style={{
                   mixBlendMode: 'overlay',
-                  filter: stage === 2 ? 'blur(0.8px)' : 'none',
-                  transition: 'fill 2s ease-in-out'
+                  filter: stage === 2 ? 'blur(0.5px)' : 'none',
+                  transition: 'fill 1.5s ease-in-out'
                 }}
               />
             ))}
