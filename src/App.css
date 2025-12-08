@@ -47,15 +47,17 @@
 
 /* Gauge Container - Centered */
 .clock-container {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 300px;
   height: 300px;
-  margin: 0 auto;
   transition: transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .clock-container.leaning-active {
-  transform: scale(1.02);
+  transform: translate(-50%, -50%) scale(1.02);
 }
 
 .circle-bg {

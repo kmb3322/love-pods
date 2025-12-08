@@ -19,7 +19,7 @@ const CONFIG = {
   vocalGaugeSpeed: 0.15, // 보컬 컨트롤 속도
   decayRate: 0.5,        // 감소 속도
   fadeOutTime: 10.0,     // 페이드아웃 시간
-  inputKeys: [' ', 'Enter'],
+  inputKeys: ['ArrowLeft', 'ArrowRight'],
   // 🔴 musicFolders 삭제됨
 };
 
@@ -528,10 +528,21 @@ function App() {
     };
   }, []);
 
+  const handleGaugeClick = () => {
+    if (!isReady && !isLoading) {
+      initAudio();
+    } else if (isReady) {
+      handlePause();
+    }
+  };
+
   return (
     <div className="app-container">
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
-      <div className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''}`}>
+      <div 
+        className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${isPaused ? 'paused' : ''}`}
+        onClick={handleGaugeClick}
+      >
         <svg width="300" height="300" viewBox="0 0 300 300">
           <defs><clipPath id="circle-clip"><circle cx="150" cy="150" r="148" /></clipPath></defs>
           <circle className="circle-bg" cx="150" cy="150" r="148"></circle>
@@ -542,178 +553,23 @@ function App() {
               <path ref={pathRef1} className="liquid-layer layer-1" />
             </g>
             {bubbles.map(b => (
-              <circle key={b.id} cx={b.x} cy={b.y} r={b.r} fill="#fff" opacity={b.opacity} style={{mixBlendMode:'overlay'}}/>
+              <circle 
+                key={b.id} 
+                cx={b.x} 
+                cy={b.y} 
+                r={b.r} 
+                fill={stage === 2 ? "#c5d5e8" : "#fff"} 
+                opacity={b.opacity} 
+                style={{
+                  mixBlendMode: 'overlay',
+                  filter: stage === 2 ? 'blur(0.8px)' : 'none',
+                  transition: 'fill 2s ease-in-out'
+                }}
+              />
             ))}
           </g>
         </svg>
       </div>
-
-      <div className="controls-stack">
-        <div className="status-text">{statusText}</div>
-        {isLoading && loadingProgress.total > 0 && (
-          <div className="loading-progress">
-            <div className="progress-bar">
-              <div 
-                className="progress-fill" 
-                style={{ width: `${(loadingProgress.current / loadingProgress.total) * 100}%` }}
-              ></div>
-            </div>
-            <div className="progress-text">
-              {loadingProgress.current} / {loadingProgress.total}
-            </div>
-          </div>
-        )}
-        {!isReady ? (
-            <button className="btn-start" onClick={initAudio} disabled={isLoading}>
-                {isLoading ? "LOADING..." : "CONNECT AUDIO"}
-            </button>
-        ) : (
-            <div className="control-buttons">
-              <button className="icon-btn btn-pause" onClick={handlePause} title={isPaused ? "Resume" : "Pause"}>
-                {isPaused ? (
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                  </svg>
-                ) : (
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="6" y="4" width="4" height="16"></rect>
-                    <rect x="14" y="4" width="4" height="16"></rect>
-                  </svg>
-                )}
-              </button>
-              <button className="icon-btn btn-stop" onClick={handleStop} title="Stop">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="6" y="6" width="12" height="12"></rect>
-                </svg>
-              </button>
-            </div>
-        )}
-      </div>
-
-      {/* 🟢 Music List Selector - Stage 1, 2에서 표시 및 변경 가능 */}
-      {isReady && (stage === 1 || stage === 2) && (
-        <div className="music-selector">
-          <div className="label">SELECTED TRACK</div>
-          {musicList.map(m => (
-            <div 
-              key={m} 
-              className={`music-item ${selectedMusic === m ? 'selected' : ''} ${!isLoading ? 'selectable' : ''} ${isLoading && selectedMusic !== m ? 'loading' : ''}`}
-              onClick={async () => {
-                  if(!isLoading) {
-                    const newMusic = m;
-                    if (newMusic === selectedMusic) return; // 같은 음악이면 무시
-                    
-                    // 새 음악이 로드되지 않았다면 먼저 로드 (이미 로드된 음악은 스킵)
-                    if (!musicBuffersRef.current[newMusic]?.other) {
-                      const { ctx } = audioRef.current;
-                      if (ctx) {
-                        setIsLoading(true);
-                        setStatusText(`LOADING ${newMusic}...`);
-                        try {
-                          const buffers = await loadMusicFolder(ctx, newMusic);
-                          musicBuffersRef.current[newMusic] = buffers;
-                        } catch (e) {
-                          console.error(`Failed to load music: ${newMusic}`, e);
-                          setErrorMessage(`Failed to load music: ${newMusic}`);
-                          setIsLoading(false);
-                          return;
-                        } finally {
-                          setIsLoading(false);
-                        }
-                      }
-                    }
-                    
-                    // 음악 변경
-                    setSelectedMusic(newMusic);
-                    selectedMusicRef.current = newMusic;
-                    
-                    // stage2에서는 stage 유지하고 노래만 변경
-                    if (stage === 2) {
-                      const { ctx, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
-                      if (ctx && gainOther && gainBass && gainDrums && gainVocals) {
-                        const now = ctx.currentTime;
-                        const fade = 1.0; // 빠른 전환
-                        
-                        // 기존 음악 트랙 fade out
-                        [gainOther, gainBass, gainDrums, gainVocals].forEach(g => {
-                          g.gain.cancelScheduledValues(now);
-                          g.gain.setValueAtTime(g.gain.value, now);
-                          g.gain.linearRampToValueAtTime(0, now + fade);
-                        });
-                        
-                        setTimeout(() => {
-                          // 기존 음악 소스 정지
-                          [audioRef.current.otherSrc, audioRef.current.bassSrc, audioRef.current.drumsSrc, audioRef.current.vocalsSrc].forEach(src => {
-                            try { src?.stop(); } catch {}
-                          });
-                          
-                          // 새 음악으로 즉시 시작 (stage2 유지)
-                          const currentSelected = selectedMusicRef.current || selectedMusic;
-                          const currentMusic = musicBuffersRef.current[currentSelected];
-                          if (currentMusic?.other) {
-                            const createSrc = (buf: AudioBuffer | null, gain: GainNode) => {
-                              if(!buf) return null;
-                              const src = ctx.createBufferSource();
-                              src.buffer = buf;
-                              src.connect(gain);
-                              src.start(ctx.currentTime);
-                              return src;
-                            };
-
-                            audioRef.current.otherSrc = createSrc(currentMusic.other, gainOther);
-                            audioRef.current.bassSrc = createSrc(currentMusic.bass, gainBass);
-                            audioRef.current.drumsSrc = createSrc(currentMusic.drums, gainDrums);
-                            audioRef.current.vocalsSrc = createSrc(currentMusic.vocals, gainVocals);
-
-                            // Other(반주) 바로 켜기
-                            gainOther.gain.setValueAtTime(1.0, ctx.currentTime);
-                            
-                            // 게이지 상태 유지 (초기화하지 않음)
-                            // stage2 상태 유지
-                          }
-                        }, fade * 1000);
-                      }
-                    } else {
-                      // stage1에서는 재시작
-                      const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
-                      if (ctx && gainClock) {
-                        const now = ctx.currentTime;
-                        const fade = CONFIG.fadeOutTime;
-                        
-                        // Fade out all gains
-                        [gainClock, gainOther, gainBass, gainDrums, gainVocals].forEach(g => {
-                          if(g) {
-                            g.gain.cancelScheduledValues(now);
-                            g.gain.setValueAtTime(g.gain.value, now);
-                            g.gain.linearRampToValueAtTime(0, now + fade);
-                          }
-                        });
-                        
-                        setTimeout(() => {
-                          // Stop all sources
-                          [audioRef.current.clockSrc, audioRef.current.otherSrc, audioRef.current.bassSrc, audioRef.current.drumsSrc, audioRef.current.vocalsSrc].forEach(src => {
-                            try { src?.stop(); } catch {}
-                          });
-                          
-                          // 새 음악으로 재시작 - startMusic 함수 사용하여 clock을 제대로 시작
-                          const { clock } = buffersRef.current;
-                          if (clock) {
-                            // startMusic 함수를 사용하여 clock을 처음부터 제대로 시작
-                            startMusic(ctx, clock);
-                          }
-                        }, fade * 1000);
-                      }
-                    }
-                  }
-              }}
-            >
-              {m}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {errorMessage && <div className="error-msg">{errorMessage}</div>}
     </div>
   );
 }
