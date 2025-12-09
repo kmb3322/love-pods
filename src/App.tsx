@@ -167,6 +167,11 @@ function App() {
       return;
     }
 
+    // 모바일에서 비디오 재생 시작 (사용자 인터랙션 필요)
+    if (bgVideoRef.current) {
+      bgVideoRef.current.play().catch(() => {});
+    }
+
     setIsLoading(true);
     try {
       setStatusText("LOADING...");
@@ -786,6 +791,9 @@ function App() {
         muted
         loop
         playsInline
+        // @ts-ignore - webkit prefix for older iOS
+        webkit-playsinline="true"
+        preload="auto"
       />
       <div className="bg-darken" ref={bgDarkRef}></div>
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
