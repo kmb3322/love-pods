@@ -99,8 +99,12 @@ function App() {
   const lastLeanRef = useRef(performance.now());
   const lastInteractionRef = useRef(performance.now());
   const resetTriggeredRef = useRef(false);
-  const autoPauseRef = useRef(false);
+  const autoPauseRef = useRef(false); // 자동 정지 상태 (스페이스로 해제 가능)
+  const manualPauseRef = useRef(false); // 수동 정지 상태 (클릭으로만 해제 가능)
   const inactivityTimerRef = useRef<number | null>(null);
+  const isPausedRef = useRef(false); // isPaused의 ref 버전 (이벤트 핸들러용)
+  const stageRef = useRef<0 | 1 | 2>(0); // stage의 ref 버전 (이벤트 핸들러용)
+  const isLoadingRef = useRef(false); // isLoading의 ref 버전 (이벤트 핸들러용)
   
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const bubbleIdRef = useRef(0);
@@ -379,6 +383,9 @@ function App() {
     bgActivatedRef.current = false;
     transitionStartRef.current = null;
     resetTriggeredRef.current = false;
+    autoPauseRef.current = false;
+    manualPauseRef.current = false;
+    clearInactivityTimer();
     setIsResetting(false);
     setIsReady(false);
     setStage(0);
@@ -412,11 +419,10 @@ function App() {
   };
 
   const triggerAutoPause = () => {
-    if (autoPauseRef.current) return;
-    autoPauseRef.current = true;
+    if (autoPauseRef.current || manualPauseRef.current) return;
     clearInactivityTimer();
     const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
-    if (ctx) {
+    if (ctx && ctx.state === 'running') {
       const now = ctx.currentTime;
       const fade = 1.2;
       [gainClock, gainOther, gainBass, gainDrums, gainVocals].forEach(g => {
@@ -425,12 +431,17 @@ function App() {
         g.gain.setValueAtTime(g.gain.value, now);
         g.gain.linearRampToValueAtTime(0, now + fade);
       });
-      setTimeout(() => {
-        handlePause();
-        // handlePause에서 autoPauseRef.current = false로 설정하므로 여기서는 제거
+      setTimeout(async () => {
+        if (ctx.state === 'running') {
+          autoPauseRef.current = true;
+          manualPauseRef.current = false;
+          await ctx.suspend();
+          setIsPaused(true);
+          setPauseAnimFlip(prev => !prev);
+          lastInteractionRef.current = performance.now();
+          setStatusText("PAUSED (AUTO)");
+        }
       }, fade * 1000 + 60);
-    } else {
-      handlePause();
     }
   };
 
@@ -464,33 +475,74 @@ function App() {
   };
 
   // --- Pause / Resume ---
-  const handlePause = async () => {
-    autoPauseRef.current = false;
+  // 수동 정지 (클릭으로만 해제 가능)
+  const handleManualPause = async () => {
     clearInactivityTimer();
     const { ctx } = audioRef.current;
     if (!ctx) return;
 
     if (ctx.state === 'running') {
+      manualPauseRef.current = true;
+      autoPauseRef.current = false;
       await ctx.suspend();
       setIsPaused(true);
-      setPauseAnimFlip(prev => !prev); // trigger pulse animation
+      setPauseAnimFlip(prev => !prev);
       lastInteractionRef.current = performance.now();
       setStatusText("PAUSED");
     } else if (ctx.state === 'suspended') {
+      // 수동 정지 해제 (클릭으로만)
+      manualPauseRef.current = false;
+      autoPauseRef.current = false;
       await ctx.resume();
       setIsPaused(false);
-      setPauseAnimFlip(prev => !prev); // trigger pulse animation
-      lastInteractionRef.current = performance.now();
+      setPauseAnimFlip(prev => !prev);
+      const now = performance.now();
+      lastInteractionRef.current = now;
+      lastLeanRef.current = now;
       restoreGainsAfterResume();
       if (stateRef.current.vocalActive) {
         setStatusText("MUSIC ACTIVE");
-        // 일시정지 해제 후 타이머 재설정
-        markInteraction();
+        // 타이머 직접 재설정 (isPaused state가 비동기로 업데이트되므로)
+        clearInactivityTimer();
+        inactivityTimerRef.current = window.setTimeout(() => {
+          triggerAutoPause();
+        }, 15000);
       } else if (!stateRef.current.isLooping) {
         setStatusText("SYNC COMPLETE...");
       } else {
         setStatusText("SYNC TIME (HOLD SPACE)");
       }
+    }
+  };
+
+  // 자동 정지에서 스페이스로 재개
+  const resumeFromAutoPause = async () => {
+    if (!autoPauseRef.current) return; // 자동 정지 상태가 아니면 무시
+    
+    clearInactivityTimer();
+    const { ctx } = audioRef.current;
+    if (!ctx || ctx.state !== 'suspended') return;
+
+    autoPauseRef.current = false;
+    manualPauseRef.current = false;
+    await ctx.resume();
+    setIsPaused(false);
+    setPauseAnimFlip(prev => !prev);
+    const now = performance.now();
+    lastInteractionRef.current = now;
+    lastLeanRef.current = now;
+    restoreGainsAfterResume();
+    if (stateRef.current.vocalActive) {
+      setStatusText("MUSIC ACTIVE");
+      // 타이머 재설정: 직접 타이머 설정
+      clearInactivityTimer();
+      inactivityTimerRef.current = window.setTimeout(() => {
+        triggerAutoPause();
+      }, 15000);
+    } else if (!stateRef.current.isLooping) {
+      setStatusText("SYNC COMPLETE...");
+    } else {
+      setStatusText("SYNC TIME (HOLD SPACE)");
     }
   };
 
@@ -665,20 +717,36 @@ function App() {
     setBubbles([...bubblesRef.current]);
   };
 
+  // ref 동기화 (이벤트 핸들러에서 최신 상태 참조용)
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  useEffect(() => {
+    stageRef.current = stage;
+  }, [stage]);
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+
   useEffect(() => {
     const handleDown = (e: KeyboardEvent) => {
         if (CONFIG.inputKeys.includes(e.key)) {
-            // If auto-paused (or manually paused) during stage 2+, space resumes immediately
-            if (isPaused && (stage >= 2 || stateRef.current.vocalActive) && !isLoading) {
-                lastInteractionRef.current = performance.now();
-                markInteraction();
-                handlePause(); // resume
+            // 자동 정지 상태에서만 스페이스로 재개 가능 (수동 정지는 클릭으로만)
+            if (isPausedRef.current && (stageRef.current >= 2 || stateRef.current.vocalActive) && !isLoadingRef.current) {
+                if (autoPauseRef.current) {
+                    // 자동 정지: 스페이스로 재개
+                    resumeFromAutoPause();
+                }
+                // 수동 정지(manualPauseRef.current === true)인 경우는 무시 (클릭으로만 해제)
                 return;
             }
             stateRef.current.isLeaning = true;
             setIsLeaning(true);
-            lastLeanRef.current = performance.now();
-            lastInteractionRef.current = lastLeanRef.current;
+            const now = performance.now();
+            lastLeanRef.current = now;
+            lastInteractionRef.current = now;
             markInteraction();
         }
     };
@@ -703,8 +771,8 @@ function App() {
       initAudio();
     } else if (isReady && (stage >= 2 || stateRef.current.vocalActive)) {
       lastInteractionRef.current = performance.now();
-      markInteraction();
-      handlePause();
+      // 수동 정지/재개 (클릭으로만 토글)
+      handleManualPause();
     }
   };
 
