@@ -110,6 +110,36 @@ body::before {
   z-index: 1;
 }
 
+.app-container.stage2 {
+  background: #c9c9c9;
+}
+
+.bg-video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.4s linear;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.bg-video.visible {
+  opacity: 0; /* actual opacity is driven via inline style */
+}
+
+.bg-darken {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity 0.3s linear;
+  z-index: 0;
+  pointer-events: none;
+}
+
 /* --- Clock Container (SVG) --- */
 .clock-container {
   position: absolute;
@@ -122,8 +152,18 @@ body::before {
   cursor: pointer;
 }
 
+.clock-container.pause-anim-a,
+.clock-container.pause-anim-b {
+  animation: pausePulse 0.35s ease;
+}
+
+.clock-container.paused {
+  transform: translate(-50%, -50%) scale(0.94);
+  transition: transform 0.25s ease;
+}
+
 .leaning-active {
-  transform: translate(-50%, -50%) scale(1.05);
+  transform: translate(-50%, -50%); /* remove scale on spacebar */
 }
 
 .circle-bg {
@@ -155,8 +195,8 @@ body::before {
 }
 
 .clock-container.vocal-mode .circle-bg {
-  stroke: #9b59b6;
-  filter: drop-shadow(0 0 8px rgba(155, 89, 182, 0.4));
+  stroke: rgba(237, 237, 237, 0.4); /* more transparent border in pastel mode */
+  filter: none;
 }
 
 @keyframes dashBlink {
@@ -175,6 +215,12 @@ body::before {
   100% { stroke-dashoffset: -64; } /* reverse direction */
 }
 
+@keyframes pausePulse {
+  0% { transform: translate(-50%, -50%) scale(0.96); }
+  50% { transform: translate(-50%, -50%) scale(1.05); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+
 /* Liquid Layers */
 .liquid-layer {
   transition: fill 1.5s ease-in-out, filter 1.5s ease-in-out;
@@ -191,25 +237,18 @@ body::before {
 
 /* Vocal Mode - Cosmic Colors */
 .vocal-mode .layer-1 { 
-  fill: #9b59b6; /* Purple for cosmic feel */
-  filter: brightness(1.2) contrast(1.1);
-  animation: cosmicPulse 4s ease-in-out infinite;
+  fill: #ffffff;
+  opacity: 0.9;
+  filter: none;
 }
 .vocal-mode .layer-2 { 
-  fill: rgba(155, 89, 182, 0.7);
-  filter: brightness(1.1);
+  fill: #ffffff;
+  opacity: 0.55;
+  filter: none;
 }
 .vocal-mode .layer-3 { 
-  fill: rgba(142, 68, 173, 0.4);
-}
-
-@keyframes cosmicPulse {
-  0%, 100% {
-    filter: brightness(1.2) contrast(1.1) saturate(1);
-  }
-  50% {
-    filter: brightness(1.4) contrast(1.15) saturate(1.2);
-  }
+  fill: #ffffff;
+  opacity: 0.3;
 }
 
 /* --- Controls & Status (Hidden) --- */

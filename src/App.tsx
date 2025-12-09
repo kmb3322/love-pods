@@ -36,7 +36,9 @@ function App() {
   const [musicList, setMusicList] = useState<string[]>([]);
   const [selectedMusic, setSelectedMusic] = useState<string>(""); 
   const selectedMusicRef = useRef<string>(""); // 🟢 ref로도 저장하여 동기 접근
-  const [, setIsPaused] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [pauseAnimFlip, setPauseAnimFlip] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [, setLoadingProgress] = useState({ current: 0, total: 0 });
 
   // --- Logic Refs ---
@@ -89,6 +91,13 @@ function App() {
   const pathRef2 = useRef<SVGPathElement>(null);
   const pathRef3 = useRef<SVGPathElement>(null);
   const liquidGroupRef = useRef<SVGGElement>(null);
+  const bgVideoRef = useRef<HTMLVideoElement>(null);
+  const bgActivatedRef = useRef(false);
+  const bgDarkRef = useRef<HTMLDivElement>(null);
+  const lastLeanRef = useRef(performance.now());
+  const lastInteractionRef = useRef(performance.now());
+  const resetTriggeredRef = useRef(false);
+  const autoPauseRef = useRef(false);
   
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const bubbleIdRef = useRef(0);
@@ -314,6 +323,9 @@ function App() {
         setStage(2);
         setStatusText("MUSIC ACTIVE");
         stateRef.current.gauge = 0;
+        const nowMs = performance.now();
+        lastInteractionRef.current = nowMs;
+        lastLeanRef.current = nowMs;
     }, delay * 1000);
   };
 
@@ -323,6 +335,7 @@ function App() {
 
     clockSrc.loop = false;
     stateRef.current.isLooping = false;
+    bgActivatedRef.current = true; // enable background video from this point
     setStatusText("SYNC COMPLETE...");
 
     const now = ctx.currentTime;
@@ -343,18 +356,106 @@ function App() {
     scheduleMusicAt17s(ctx, musicStartTime);
   };
 
+  const finishResetToInitial = () => {
+    const { ctx } = audioRef.current;
+    try { ctx?.close(); } catch (e) { console.error(e); }
+    [audioRef.current.clockSrc, audioRef.current.otherSrc, audioRef.current.bassSrc, audioRef.current.drumsSrc, audioRef.current.vocalsSrc].forEach(src => {
+      try { src?.stop(); } catch {}
+    });
+    audioRef.current = { 
+      ctx: null, clockSrc: null, otherSrc: null, bassSrc: null, drumsSrc: null, vocalsSrc: null,
+      gainClock: null, gainOther: null, gainBass: null, gainDrums: null, gainVocals: null, startTime: 0 
+    };
+    stateRef.current.isLooping = true;
+    stateRef.current.vocalActive = false;
+    stateRef.current.gauge = 0;
+    stateRef.current.visualGauge = 0;
+    bgActivatedRef.current = false;
+    resetTriggeredRef.current = false;
+    setIsResetting(false);
+    setIsReady(false);
+    setStage(0);
+    setIsPaused(false);
+    setIsLoading(false);
+    setStatusText("DISCONNECTED");
+  };
+
+  const startResetToInitial = () => {
+    if (resetTriggeredRef.current) return;
+    resetTriggeredRef.current = true;
+    setIsResetting(true);
+  };
+
+  const triggerAutoPause = () => {
+    if (autoPauseRef.current) return;
+    autoPauseRef.current = true;
+    const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
+    if (ctx) {
+      const now = ctx.currentTime;
+      const fade = 1.2;
+      [gainClock, gainOther, gainBass, gainDrums, gainVocals].forEach(g => {
+        if (!g) return;
+        g.gain.cancelScheduledValues(now);
+        g.gain.setValueAtTime(g.gain.value, now);
+        g.gain.linearRampToValueAtTime(0, now + fade);
+      });
+      setTimeout(() => {
+        handlePause();
+        autoPauseRef.current = false;
+      }, fade * 1000 + 60);
+    } else {
+      handlePause();
+      autoPauseRef.current = false;
+    }
+  };
+
+  const restoreGainsAfterResume = () => {
+    const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
+    if (!ctx) return;
+    const gauge = stateRef.current.gauge;
+
+    if (stateRef.current.vocalActive) {
+      gainClock?.gain.setValueAtTime(1.0, ctx.currentTime);
+      gainOther?.gain.setValueAtTime(1.0, ctx.currentTime);
+
+      let bassVol = 0, drumVol = 0, vocalVol = 0;
+      if (gauge <= 20) bassVol = gauge / 20;
+      else {
+        bassVol = 1.0;
+        if (gauge <= 40) drumVol = (gauge - 20) / 20;
+        else {
+          drumVol = 1.0;
+          vocalVol = (gauge - 40) / 60;
+        }
+      }
+      gainBass?.gain.setValueAtTime(bassVol, ctx.currentTime);
+      gainDrums?.gain.setValueAtTime(drumVol, ctx.currentTime);
+      gainVocals?.gain.setValueAtTime(vocalVol, ctx.currentTime);
+    } else if (!stateRef.current.isLooping) {
+      gainClock?.gain.setValueAtTime(1.0, ctx.currentTime);
+    } else {
+      gainClock?.gain.setValueAtTime(gauge / 100, ctx.currentTime);
+    }
+  };
+
   // --- Pause / Resume ---
   const handlePause = async () => {
+    autoPauseRef.current = false;
     const { ctx } = audioRef.current;
     if (!ctx) return;
 
     if (ctx.state === 'running') {
       await ctx.suspend();
       setIsPaused(true);
+      setPauseAnimFlip(prev => !prev); // trigger pulse animation
+      lastInteractionRef.current = performance.now();
       setStatusText("PAUSED");
     } else if (ctx.state === 'suspended') {
       await ctx.resume();
       setIsPaused(false);
+      setPauseAnimFlip(prev => !prev); // trigger pulse animation
+      lastInteractionRef.current = performance.now();
+      restoreGainsAfterResume();
       if (stateRef.current.vocalActive) {
         setStatusText("MUSIC ACTIVE");
       } else if (!stateRef.current.isLooping) {
@@ -369,14 +470,50 @@ function App() {
   const gameLoop = (time: number) => {
     const t = time * 0.002;
     const { ctx, gainClock, gainBass, gainDrums, gainVocals } = audioRef.current;
+    const nowMs = performance.now();
+
+    // Re-arm auto pause flag whenever we're running
+    if (!isPaused && ctx?.state === 'running') {
+      autoPauseRef.current = false;
+    }
+
+    // Auto-pause on inactivity in stage 2+
+    const isStage2OrMore = stage >= 2 || stateRef.current.vocalActive;
+    if (!isPaused && isStage2OrMore && !isResetting && !resetTriggeredRef.current && audioRef.current.ctx?.state === 'running') {
+      if (nowMs - lastInteractionRef.current > 15000) {
+        triggerAutoPause();
+        requestRef.current = requestAnimationFrame(gameLoop);
+        return;
+      }
+    }
+
+    // If paused, skip gauge/visual updates but keep the loop alive
+    if (isPaused) {
+      requestRef.current = requestAnimationFrame(gameLoop);
+      return;
+    }
 
     // Input Logic
     const currentGaugeSpeed = stateRef.current.vocalActive ? CONFIG.vocalGaugeSpeed : CONFIG.gaugeSpeed;
+
     if (stateRef.current.isLeaning) {
         stateRef.current.gauge += currentGaugeSpeed;
+    } else if (isResetting) {
+        stateRef.current.gauge -= 2.5; // faster decay during reset
     } else {
         stateRef.current.gauge -= CONFIG.decayRate;
     }
+
+    // Stage 2 inactivity reset (15s no leaning)
+    if (stateRef.current.vocalActive) {
+        if (stateRef.current.isLeaning) {
+            lastLeanRef.current = nowMs;
+            lastInteractionRef.current = nowMs;
+        } else if (!isResetting && !resetTriggeredRef.current && nowMs - lastLeanRef.current > 15000) {
+            startResetToInitial();
+        }
+    }
+
     if (stateRef.current.gauge < 0) stateRef.current.gauge = 0;
     if (stateRef.current.gauge > 100) stateRef.current.gauge = 100;
 
@@ -418,6 +555,29 @@ function App() {
     stateRef.current.visualGauge += (visualLevel - stateRef.current.visualGauge) * 0.1;
     const smoothVisual = stateRef.current.visualGauge;
 
+    // Background video opacity tied to progress after first loop release
+    const bgVideo = bgVideoRef.current;
+    const shouldShowBg = (bgActivatedRef.current || stateRef.current.vocalActive) && !isResetting;
+    const baseOpacity = stateRef.current.vocalActive ? 0.5 : 0;
+    const targetOpacity = shouldShowBg
+      ? Math.min(Math.max(baseOpacity + smoothVisual * (1 - baseOpacity), baseOpacity), 1)
+      : 0;
+    if (bgVideo) {
+      bgVideo.style.opacity = `${targetOpacity}`;
+      if (shouldShowBg && bgVideo.paused) {
+        bgVideo.play().catch(() => {});
+      }
+    }
+
+    // Darken overlay with gauge in stage 2
+    const darkLayer = bgDarkRef.current;
+    if (darkLayer) {
+      const darkOpacity = stateRef.current.vocalActive
+        ? Math.min(Math.max(smoothVisual * 0.6, 0), 0.6)
+        : 0;
+      darkLayer.style.opacity = `${darkOpacity}`;
+    }
+
     if (liquidGroupRef.current) {
         const maxY = 300;
         const currentY = maxY - (smoothVisual * 300);
@@ -426,6 +586,11 @@ function App() {
     if (pathRef1.current) pathRef1.current.setAttribute('d', createWavePath(t, 0, 8, 0.02));
     if (pathRef2.current) pathRef2.current.setAttribute('d', createWavePath(t, 2, 6, 0.025));
     if (pathRef3.current) pathRef3.current.setAttribute('d', createWavePath(t, 4, 10, 0.015));
+
+    if (isResetting && stateRef.current.gauge === 0 && smoothVisual < 0.02) {
+      finishResetToInitial();
+      return;
+    }
 
     updateBubbles(smoothVisual);
     requestRef.current = requestAnimationFrame(gameLoop);
@@ -446,6 +611,11 @@ function App() {
   };
 
   const updateBubbles = (level: number) => {
+    if (stateRef.current.vocalActive) {
+      bubblesRef.current = [];
+      setBubbles([]);
+      return;
+    }
     if (Math.random() < 0.1 && (isLeaning || !stateRef.current.isLooping)) {
         const id = bubbleIdRef.current++;
         bubblesRef.current.push({
@@ -462,8 +632,16 @@ function App() {
   useEffect(() => {
     const handleDown = (e: KeyboardEvent) => {
         if (CONFIG.inputKeys.includes(e.key)) {
+            // If auto-paused (or manually paused) during stage 2+, space resumes immediately
+            if (isPaused && (stage >= 2 || stateRef.current.vocalActive) && !isLoading) {
+                lastInteractionRef.current = performance.now();
+                handlePause(); // resume
+                return;
+            }
             stateRef.current.isLeaning = true;
             setIsLeaning(true);
+            lastLeanRef.current = performance.now();
+            lastInteractionRef.current = lastLeanRef.current;
         }
     };
     const handleUp = (e: KeyboardEvent) => {
@@ -485,20 +663,57 @@ function App() {
   const handleGaugeClick = () => {
     if (!isReady && !isLoading) {
       initAudio();
-    } else if (isReady) {
+    } else if (isReady && (stage >= 2 || stateRef.current.vocalActive)) {
+      lastInteractionRef.current = performance.now();
       handlePause();
     }
   };
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${stage === 2 ? 'stage2' : ''}`}>
+      <video
+        className={`bg-video ${bgActivatedRef.current ? 'visible' : ''}`}
+        ref={bgVideoRef}
+        src="/bright.mp4"
+        autoPlay
+        muted
+        loop
+        playsInline
+      />
+      <div className="bg-darken" ref={bgDarkRef}></div>
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
       <div 
-        className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${!isReady ? 'initial' : ''} ${isLoading ? 'loading' : ''}`}
+        className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${!isReady ? 'initial' : ''} ${isLoading ? 'loading' : ''} ${(pauseAnimFlip ? 'pause-anim-a' : 'pause-anim-b')} ${isPaused ? 'paused' : ''}`}
         onClick={handleGaugeClick}
       >
         <svg width="300" height="300" viewBox="0 0 300 300">
-          <defs><clipPath id="circle-clip"><circle cx="150" cy="150" r="148" /></clipPath></defs>
+          <defs>
+            <clipPath id="circle-clip"><circle cx="150" cy="150" r="148" /></clipPath>
+            <linearGradient id="rainbow-grad-1" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#e88fb3">
+                <animate attributeName="stop-color" values="#e88fb3;#c38fff;#7ab8ff;#e88fd3;#e88fb3" dur="16s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="100%" stopColor="#7ab8ff">
+                <animate attributeName="stop-color" values="#7ab8ff;#8fc2ff;#e88fd3;#e88fb3;#7ab8ff" dur="16s" repeatCount="indefinite" />
+              </stop>
+            </linearGradient>
+            <linearGradient id="rainbow-grad-2" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#e88fd3">
+                <animate attributeName="stop-color" values="#e88fd3;#e88fb3;#c38fff;#7ab8ff;#e88fd3" dur="18s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="100%" stopColor="#c38fff">
+                <animate attributeName="stop-color" values="#c38fff;#8fc2ff;#7ab8ff;#e88fb3;#e88fd3;#c38fff" dur="18s" repeatCount="indefinite" />
+              </stop>
+            </linearGradient>
+            <linearGradient id="rainbow-grad-3" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#8fc2ff" stopOpacity="0.65">
+                <animate attributeName="stop-color" values="#8fc2ff;#c38fff;#e88fd3;#e88fb3;#8fc2ff" dur="20s" repeatCount="indefinite" />
+              </stop>
+              <stop offset="100%" stopColor="#e88fb3" stopOpacity="0.5">
+                <animate attributeName="stop-color" values="#e88fb3;#e88fd3;#7ab8ff;#8fc2ff;#e88fb3" dur="20s" repeatCount="indefinite" />
+              </stop>
+            </linearGradient>
+          </defs>
           <circle className="circle-bg" cx="150" cy="150" r="148"></circle>
           <g clipPath="url(#circle-clip)">
             <g id="liquid-group" ref={liquidGroupRef} transform="translate(0, 300)">
@@ -506,17 +721,16 @@ function App() {
               <path ref={pathRef2} className="liquid-layer layer-2" />
               <path ref={pathRef1} className="liquid-layer layer-1" />
             </g>
-            {bubbles.map(b => (
+            {stage !== 2 && bubbles.map(b => (
               <circle 
                 key={b.id} 
                 cx={b.x} 
                 cy={b.y} 
                 r={b.r} 
-                fill={stage === 2 ? "#e8d5ff" : "#fff"} 
+                fill="#fff" 
                 opacity={b.opacity} 
                 style={{
                   mixBlendMode: 'overlay',
-                  filter: stage === 2 ? 'blur(0.5px)' : 'none',
                   transition: 'fill 1.5s ease-in-out'
                 }}
               />
