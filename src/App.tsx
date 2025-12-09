@@ -127,6 +127,42 @@ function App() {
       });
   }, []);
 
+  // 모바일 비디오 재생을 위한 첫 인터랙션 감지
+  const videoPlayAttemptedRef = useRef(false);
+  useEffect(() => {
+    const tryPlayVideo = () => {
+      if (videoPlayAttemptedRef.current) return;
+      videoPlayAttemptedRef.current = true;
+      
+      const video = bgVideoRef.current;
+      if (video) {
+        video.muted = true;
+        video.load();
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            // 재시도: 100ms 후
+            setTimeout(() => {
+              video.play().catch(() => {});
+            }, 100);
+          });
+        }
+      }
+    };
+
+    // 터치/클릭/키보드 이벤트에서 비디오 재생 시도
+    const events = ['touchstart', 'touchend', 'click', 'keydown'];
+    events.forEach(event => {
+      document.addEventListener(event, tryPlayVideo, { once: true, passive: true });
+    });
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, tryPlayVideo);
+      });
+    };
+  }, []);
+
   // --- Audio Loading ---
   const loadFile = async (ctx: AudioContext, url: string) => {
     const res = await fetch(url);
@@ -169,7 +205,16 @@ function App() {
 
     // 모바일에서 비디오 재생 시작 (사용자 인터랙션 필요)
     if (bgVideoRef.current) {
-      bgVideoRef.current.play().catch(() => {});
+      const video = bgVideoRef.current;
+      // 비디오 로드 후 재생 시도
+      video.load();
+      video.muted = true; // 모바일에서 muted 필수
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((e) => {
+          console.log('Video autoplay failed, will retry on interaction:', e);
+        });
+      }
     }
 
     setIsLoading(true);
@@ -640,24 +685,26 @@ function App() {
     const bgVideo = bgVideoRef.current;
     const shouldShowBg = (bgActivatedRef.current || stateRef.current.vocalActive) && !isResetting;
     
-    let targetOpacity = 0;
+    // 모바일에서는 최소 0.001 opacity 유지 (0이면 재생 안됨)
+    let targetOpacity = 0.001;
     if (shouldShowBg) {
       if (stateRef.current.vocalActive) {
         // stage2: 0.3 ~ 1.0 범위 (게이지에 따라)
         const baseOpacity = 0.3;
         targetOpacity = Math.min(Math.max(baseOpacity + smoothVisual * (1 - baseOpacity), baseOpacity), 1);
       } else {
-        // 전환 구간: 0 → 0.3으로 천천히 증가 (CONFIG.vocalStartTime 동안)
+        // 전환 구간: 0.001 → 0.3으로 천천히 증가 (CONFIG.vocalStartTime 동안)
         const transitionDuration = CONFIG.vocalStartTime * 1000; // 17초를 ms로
         const elapsed = transitionStartRef.current ? nowMs - transitionStartRef.current : 0;
         const progress = Math.min(elapsed / transitionDuration, 1);
-        targetOpacity = 0.3 * progress;
+        targetOpacity = Math.max(0.001, 0.3 * progress);
       }
     }
     
     if (bgVideo) {
       bgVideo.style.opacity = `${targetOpacity}`;
-      if (shouldShowBg && bgVideo.paused) {
+      // 비디오가 멈춰있으면 재생 시도
+      if (bgVideo.paused || bgVideo.ended) {
         bgVideo.play().catch(() => {});
       }
     }
@@ -786,15 +833,23 @@ function App() {
       <video
         className={`bg-video ${bgActivatedRef.current ? 'visible' : ''}`}
         ref={bgVideoRef}
-        src="/bright.mp4"
         autoPlay
         muted
         loop
         playsInline
+        preload="auto"
+        disablePictureInPicture
+        disableRemotePlayback
         // @ts-ignore - webkit prefix for older iOS
         webkit-playsinline="true"
-        preload="auto"
-      />
+        x-webkit-airplay="deny"
+        onCanPlayThrough={() => {
+          // 비디오 로드 완료 시 재생 시도
+          bgVideoRef.current?.play().catch(() => {});
+        }}
+      >
+        <source src="/bright.mp4" type="video/mp4" />
+      </video>
       <div className="bg-darken" ref={bgDarkRef}></div>
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
       <div 

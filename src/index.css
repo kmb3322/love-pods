@@ -120,14 +120,17 @@ body::before {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0;
+  opacity: 0.001; /* 0.001 instead of 0 - iOS requires video to be "visible" to play */
   transition: opacity 0.4s linear;
   z-index: 0;
   pointer-events: none;
+  /* iOS Safari 추가 속성 */
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
 }
 
 .bg-video.visible {
-  opacity: 0; /* actual opacity is driven via inline style */
+  /* actual opacity is driven via inline style */
 }
 
 .bg-darken {
