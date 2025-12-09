@@ -94,10 +94,13 @@ function App() {
   const bgVideoRef = useRef<HTMLVideoElement>(null);
   const bgActivatedRef = useRef(false);
   const bgDarkRef = useRef<HTMLDivElement>(null);
+  const stage2StartRef = useRef<number | null>(null);
+  const transitionStartRef = useRef<number | null>(null); // stage1→stage2 전환 시작 시점
   const lastLeanRef = useRef(performance.now());
   const lastInteractionRef = useRef(performance.now());
   const resetTriggeredRef = useRef(false);
   const autoPauseRef = useRef(false);
+  const inactivityTimerRef = useRef<number | null>(null);
   
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const bubbleIdRef = useRef(0);
@@ -326,6 +329,8 @@ function App() {
         const nowMs = performance.now();
         lastInteractionRef.current = nowMs;
         lastLeanRef.current = nowMs;
+        stage2StartRef.current = nowMs;
+        markInteraction();
     }, delay * 1000);
   };
 
@@ -336,6 +341,7 @@ function App() {
     clockSrc.loop = false;
     stateRef.current.isLooping = false;
     bgActivatedRef.current = true; // enable background video from this point
+    transitionStartRef.current = performance.now(); // 전환 구간 시작 시점 기록
     setStatusText("SYNC COMPLETE...");
 
     const now = ctx.currentTime;
@@ -371,6 +377,7 @@ function App() {
     stateRef.current.gauge = 0;
     stateRef.current.visualGauge = 0;
     bgActivatedRef.current = false;
+    transitionStartRef.current = null;
     resetTriggeredRef.current = false;
     setIsResetting(false);
     setIsReady(false);
@@ -386,9 +393,28 @@ function App() {
     setIsResetting(true);
   };
 
+  const clearInactivityTimer = () => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  };
+
+  const markInteraction = () => {
+    const now = performance.now();
+    lastInteractionRef.current = now;
+    if (stateRef.current.vocalActive && !isPaused && !isResetting && !resetTriggeredRef.current) {
+      clearInactivityTimer();
+      inactivityTimerRef.current = window.setTimeout(() => {
+        triggerAutoPause();
+      }, 15000);
+    }
+  };
+
   const triggerAutoPause = () => {
     if (autoPauseRef.current) return;
     autoPauseRef.current = true;
+    clearInactivityTimer();
     const { ctx, gainClock, gainOther, gainBass, gainDrums, gainVocals } = audioRef.current;
     if (ctx) {
       const now = ctx.currentTime;
@@ -401,11 +427,10 @@ function App() {
       });
       setTimeout(() => {
         handlePause();
-        autoPauseRef.current = false;
+        // handlePause에서 autoPauseRef.current = false로 설정하므로 여기서는 제거
       }, fade * 1000 + 60);
     } else {
       handlePause();
-      autoPauseRef.current = false;
     }
   };
 
@@ -441,6 +466,7 @@ function App() {
   // --- Pause / Resume ---
   const handlePause = async () => {
     autoPauseRef.current = false;
+    clearInactivityTimer();
     const { ctx } = audioRef.current;
     if (!ctx) return;
 
@@ -458,6 +484,8 @@ function App() {
       restoreGainsAfterResume();
       if (stateRef.current.vocalActive) {
         setStatusText("MUSIC ACTIVE");
+        // 일시정지 해제 후 타이머 재설정
+        markInteraction();
       } else if (!stateRef.current.isLooping) {
         setStatusText("SYNC COMPLETE...");
       } else {
@@ -472,18 +500,14 @@ function App() {
     const { ctx, gainClock, gainBass, gainDrums, gainVocals } = audioRef.current;
     const nowMs = performance.now();
 
-    // Re-arm auto pause flag whenever we're running
-    if (!isPaused && ctx?.state === 'running') {
-      autoPauseRef.current = false;
-    }
-
-    // Auto-pause on inactivity in stage 2+
+    // Auto-pause on inactivity in stage 2+ (timer driven via markInteraction)
     const isStage2OrMore = stage >= 2 || stateRef.current.vocalActive;
     if (!isPaused && isStage2OrMore && !isResetting && !resetTriggeredRef.current && audioRef.current.ctx?.state === 'running') {
-      if (nowMs - lastInteractionRef.current > 15000) {
-        triggerAutoPause();
-        requestRef.current = requestAnimationFrame(gameLoop);
-        return;
+      // ensure timer is armed if not already
+      if (!inactivityTimerRef.current) {
+        inactivityTimerRef.current = window.setTimeout(() => {
+          triggerAutoPause();
+        }, 15000);
       }
     }
 
@@ -558,10 +582,22 @@ function App() {
     // Background video opacity tied to progress after first loop release
     const bgVideo = bgVideoRef.current;
     const shouldShowBg = (bgActivatedRef.current || stateRef.current.vocalActive) && !isResetting;
-    const baseOpacity = stateRef.current.vocalActive ? 0.5 : 0;
-    const targetOpacity = shouldShowBg
-      ? Math.min(Math.max(baseOpacity + smoothVisual * (1 - baseOpacity), baseOpacity), 1)
-      : 0;
+    
+    let targetOpacity = 0;
+    if (shouldShowBg) {
+      if (stateRef.current.vocalActive) {
+        // stage2: 0.3 ~ 1.0 범위 (게이지에 따라)
+        const baseOpacity = 0.3;
+        targetOpacity = Math.min(Math.max(baseOpacity + smoothVisual * (1 - baseOpacity), baseOpacity), 1);
+      } else {
+        // 전환 구간: 0 → 0.3으로 천천히 증가 (CONFIG.vocalStartTime 동안)
+        const transitionDuration = CONFIG.vocalStartTime * 1000; // 17초를 ms로
+        const elapsed = transitionStartRef.current ? nowMs - transitionStartRef.current : 0;
+        const progress = Math.min(elapsed / transitionDuration, 1);
+        targetOpacity = 0.3 * progress;
+      }
+    }
+    
     if (bgVideo) {
       bgVideo.style.opacity = `${targetOpacity}`;
       if (shouldShowBg && bgVideo.paused) {
@@ -573,7 +609,7 @@ function App() {
     const darkLayer = bgDarkRef.current;
     if (darkLayer) {
       const darkOpacity = stateRef.current.vocalActive
-        ? Math.min(Math.max(smoothVisual * 0.6, 0), 0.6)
+        ? Math.min(Math.max(smoothVisual * 0.9, 0), 0.9)
         : 0;
       darkLayer.style.opacity = `${darkOpacity}`;
     }
@@ -635,6 +671,7 @@ function App() {
             // If auto-paused (or manually paused) during stage 2+, space resumes immediately
             if (isPaused && (stage >= 2 || stateRef.current.vocalActive) && !isLoading) {
                 lastInteractionRef.current = performance.now();
+                markInteraction();
                 handlePause(); // resume
                 return;
             }
@@ -642,6 +679,7 @@ function App() {
             setIsLeaning(true);
             lastLeanRef.current = performance.now();
             lastInteractionRef.current = lastLeanRef.current;
+            markInteraction();
         }
     };
     const handleUp = (e: KeyboardEvent) => {
@@ -665,6 +703,7 @@ function App() {
       initAudio();
     } else if (isReady && (stage >= 2 || stateRef.current.vocalActive)) {
       lastInteractionRef.current = performance.now();
+      markInteraction();
       handlePause();
     }
   };
