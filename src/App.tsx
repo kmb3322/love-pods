@@ -20,6 +20,7 @@ const CONFIG = {
   decayRate: 0.5,        // 감소 속도
   fadeOutTime: 10.0,     // 페이드아웃 시간
   inputKeys: [' ', 'Enter'],
+  music: 'AtYourBest',   // 사용할 음악 폴더 (이것만 로드)
   // 🔴 musicFolders 삭제됨
 };
 
@@ -27,19 +28,17 @@ function App() {
   // --- UI States ---
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [hintTimeUp, setHintTimeUp] = useState(false);
   const [, setStatusText] = useState("DISCONNECTED");
   const [isLeaning, setIsLeaning] = useState(false);
   const [stage, setStage] = useState<0 | 1 | 2>(0);
   const [, setErrorMessage] = useState("");
 
-  // 🟢 동적 음악 목록 상태 추가
-  const [musicList, setMusicList] = useState<string[]>([]);
-  const [selectedMusic, setSelectedMusic] = useState<string>(""); 
-  const selectedMusicRef = useRef<string>(""); // 🟢 ref로도 저장하여 동기 접근
+  const selectedMusic = CONFIG.music;
+  const selectedMusicRef = useRef<string>(CONFIG.music);
   const [isPaused, setIsPaused] = useState(false);
   const [pauseAnimFlip, setPauseAnimFlip] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [, setLoadingProgress] = useState({ current: 0, total: 0 });
 
   // --- Logic Refs ---
   const audioRef = useRef<{
@@ -110,21 +109,24 @@ function App() {
   const bubbleIdRef = useRef(0);
   const bubblesRef = useRef<Bubble[]>([]);
 
-  // 🟢 앱 시작 시 music_list.json 로드
+  // 페이지가 열리자마자 오디오 미리 로드 (클릭 시 바로 시작)
+  // AudioBuffer는 다른 AudioContext에서도 재사용 가능하므로 디코딩 전용 context 사용
+  const preloadRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
-    fetch('/music_list.json')
-      .then(res => res.json())
-      .then(data => {
-        setMusicList(data);
-        if (data.length > 0) {
-          setSelectedMusic(data[0]);
-          selectedMusicRef.current = data[0];
-        }
-      })
-      .catch(err => {
-        console.error("Failed to load music list:", err);
-        setErrorMessage("Music list load failed. Check public/music_list.json");
-      });
+    if (preloadRef.current) return;
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    const decodeCtx: AudioContext = new AC();
+    preloadRef.current = Promise.all([
+      loadFile(decodeCtx, '/onlyclock.wav'),
+      loadMusicFolder(decodeCtx, CONFIG.music),
+    ]).then(([clock, music]) => {
+      buffersRef.current = { clock };
+      musicBuffersRef.current[CONFIG.music] = music;
+    });
+    preloadRef.current.catch((err) => {
+      console.error('Audio preload failed:', err);
+      setErrorMessage(err.message);
+    });
   }, []);
 
   // 모바일 비디오 재생을 위한 첫 인터랙션 감지
@@ -234,20 +236,11 @@ function App() {
       const ctx = new AudioContext();
       if (ctx.state === 'suspended') await ctx.resume();
 
-      // 1. Clock 로드
-      setStatusText("LOADING CLOCK...");
-      const clockBuf = await loadFile(ctx, '/onlyclock.wav');
-      buffersRef.current = { clock: clockBuf };
-
-      // 2. 모든 음악을 효율적으로 로드 (우선순위 기반 병렬 로딩)
-      const totalMusic = musicList.length;
-      setLoadingProgress({ current: 0, total: totalMusic });
-      
-      // 선택된 음악을 먼저 로드 (우선순위)
-      setStatusText(`LOADING ${currentSelected}...`);
-      const selectedBuffers = await loadMusicFolder(ctx, currentSelected);
-      musicBuffersRef.current[currentSelected] = selectedBuffers;
-      setLoadingProgress({ current: 1, total: totalMusic });
+      // 미리 로드된 버퍼 사용 (아직 로딩 중이면 끝날 때까지 대기)
+      setStatusText("LOADING...");
+      await preloadRef.current;
+      const clockBuf = buffersRef.current.clock;
+      if (!clockBuf) throw new Error('Clock audio not loaded');
 
       // Node Setup (선택된 음악이 로드되면 바로 시작 가능)
       const gainClock = ctx.createGain();
@@ -276,24 +269,6 @@ function App() {
       // 선택된 음악이 로드되었으므로 바로 시작
       startMusic(ctx, clockBuf);
 
-      // 3. 나머지 음악들을 백그라운드에서 병렬로 로드 (에러가 있어도 계속 진행)
-      const remainingMusic = musicList.filter(folder => folder !== currentSelected);
-      if (remainingMusic.length > 0) {
-        Promise.allSettled(
-          remainingMusic.map(async (folder, index) => {
-            try {
-              const buffers = await loadMusicFolder(ctx, folder);
-              musicBuffersRef.current[folder] = buffers;
-              setLoadingProgress({ current: 1 + index + 1, total: totalMusic });
-            } catch (e) {
-              console.error(`Failed to load ${folder}:`, e);
-              // 에러가 있어도 계속 진행
-            }
-          })
-        ).then(() => {
-          setLoadingProgress({ current: totalMusic, total: totalMusic });
-        });
-      }
 
     } catch (e: any) {
       console.error(e);
@@ -778,6 +753,12 @@ function App() {
     stageRef.current = stage;
   }, [stage]);
 
+  // 시작 안내 문구: 5초 뒤 페이드인
+  useEffect(() => {
+    const t = setTimeout(() => setHintTimeUp(true), 5000);
+    return () => clearTimeout(t);
+  }, []);
+
   useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
@@ -852,6 +833,11 @@ function App() {
       </video>
       <div className="bg-darken" ref={bgDarkRef}></div>
       <div className={`input-indicator ${isLeaning ? 'active' : ''}`}></div>
+      {/* 시계 소리가 시작되면(isReady) 페이드아웃 */}
+      <div className={`start-hint ${hintTimeUp && !isReady ? 'visible' : ''}`}>
+        In the absence of LovePods: hold the space bar and click to begin.<br />
+        Press and hold the space bar to experience the work.
+      </div>
       <div 
         className={`clock-container ${isLeaning ? 'leaning-active' : ''} ${stage === 2 ? 'vocal-mode' : ''} ${isReady ? 'active' : ''} ${!isReady ? 'initial' : ''} ${isLoading ? 'loading' : ''} ${(pauseAnimFlip ? 'pause-anim-a' : 'pause-anim-b')} ${isPaused ? 'paused' : ''}`}
         onClick={handleGaugeClick}

@@ -101,14 +101,14 @@
   transform: translateX(-50%);
   color: #f55;
   font-size: 12px;
-  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   z-index: 10;
 }
 
 /* Buttons */
 .btn-start,
 .btn-control {
-  font-family: 'NeueHaasUnica', system-ui, sans-serif;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-weight: 700;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -149,3 +149,4 @@
   justify-content: center;
   border-radius: 50%;
 }
+

@@ -1,59 +1,5 @@
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaPro.woff2') format('woff2'),
-       url('/NeueHaasUnicaPro.woff') format('woff');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaProLight.woff2') format('woff2'),
-       url('/NeueHaasUnicaProLight.woff') format('woff');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaProMedium.woff2') format('woff2'),
-       url('/NeueHaasUnicaProMedium.woff') format('woff');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaW06Bold.woff2') format('woff2'),
-       url('/NeueHaasUnicaW06Bold.woff') format('woff');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaW06Heavy.woff2') format('woff2'),
-       url('/NeueHaasUnicaW06Heavy.woff') format('woff');
-  font-weight: 800;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'NeueHaasUnica';
-  src: url('/NeueHaasUnicaW06Thin.woff2') format('woff2'),
-       url('/NeueHaasUnicaW06Thin.woff') format('woff');
-  font-weight: 100;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
-  font-family: 'NeueHaasUnica', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   --bg-color: #f0f0f0;
   --text-color: #1a1a1a;
   --primary-color: #000;
@@ -320,4 +266,29 @@ body::before {
 /* Loading Progress - Hidden */
 .loading-progress {
   display: none;
+}
+/* Start Hint: 5초 뒤 천천히 페이드인, 시계 소리 시작 시 페이드아웃 */
+.start-hint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  text-align: left;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #000;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 1.5s ease-in-out;
+}
+
+.start-hint.visible {
+  opacity: 1;
+  transition: opacity 3s ease-in-out;
 }
